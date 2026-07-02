@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Email Security Report — {{ posture.domain }}</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242836;
+    --border: #2e3346;
+    --text: #e1e4ed;
+    --text-dim: #8b90a5;
+    --green: #34d399;
+    --yellow: #fbbf24;
+    --red: #f87171;
+    --cyan: #67e8f9;
+    --blue: #60a5fa;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; color: var(--cyan); margin-bottom: .25rem; }
+  .subtitle { color: var(--text-dim); font-size: .85rem; margin-bottom: 2rem; }
+
+  /* Grid layout */
+  .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; }
+  .card-title { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-dim); margin-bottom: .75rem; }
+
+  /* Risk meter */
+  .risk-meter { text-align: center; }
+  .risk-meter .score { font-size: 3rem; font-weight: 800; line-height: 1; }
+  .risk-meter .level { font-size: .9rem; font-weight: 600; margin-top: .25rem; }
+  .risk-meter .bar-bg { height: 8px; background: var(--surface2); border-radius: 4px; margin-top: .75rem; overflow: hidden; }
+  .risk-meter .bar-fill { height: 100%; border-radius: 4px; transition: width .5s; }
+
+  .c-green { color: var(--green); }
+  .c-yellow { color: var(--yellow); }
+  .c-red { color: var(--red); }
+  .bg-green { background: var(--green); }
+  .bg-yellow { background: var(--yellow); }
+  .bg-red { background: var(--red); }
+
+  /* Badges */
+  .badge { display: inline-block; padding: .15rem .5rem; border-radius: 4px; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+  .badge-pass { background: rgba(52,211,153,.15); color: var(--green); border: 1px solid rgba(52,211,153,.3); }
+  .badge-warn { background: rgba(251,191,36,.15); color: var(--yellow); border: 1px solid rgba(251,191,36,.3); }
+  .badge-fail { background: rgba(248,113,113,.15); color: var(--red); border: 1px solid rgba(248,113,113,.3); }
+  .badge-info { background: rgba(96,165,250,.15); color: var(--blue); border: 1px solid rgba(96,165,250,.3); }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th { text-align: left; color: var(--text-dim); font-weight: 600; font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; padding: .5rem .75rem; border-bottom: 1px solid var(--border); }
+  td { padding: .6rem .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .raw { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: .75rem; color: var(--text-dim); word-break: break-all; }
+
+  /* Remediation */
+  .rem-item { background: var(--surface2); border-radius: 6px; padding: 1rem; margin-bottom: .75rem; border-left: 3px solid var(--red); }
+  .rem-item.sev-medium { border-left-color: var(--yellow); }
+  .rem-item.sev-low { border-left-color: var(--green); }
+  .rem-desc { font-size: .85rem; margin-bottom: .5rem; }
+  .rem-fix { font-family: 'Cascadia Code', monospace; font-size: .75rem; background: var(--bg); padding: .5rem .75rem; border-radius: 4px; color: var(--cyan); margin-top: .35rem; overflow-x: auto; }
+
+  /* Spoof sim */
+  .spoof-stage { display: flex; align-items: flex-start; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--border); }
+  .spoof-stage:last-child { border-bottom: none; }
+  .spoof-label { font-weight: 600; min-width: 200px; font-size: .85rem; }
+  .spoof-verdict { font-size: .85rem; }
+
+  .section-title { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; color: var(--text); }
+
+  /* SMTP Handshake */
+  .smtp-step { display: grid; grid-template-columns: 120px 50px 1fr; gap: .5rem; align-items: start; padding: .6rem 0; border-bottom: 1px solid var(--border); font-size: .85rem; }
+  .smtp-step:last-child { border-bottom: none; }
+  .smtp-phase { font-weight: 700; font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
+  .smtp-code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-weight: 700; text-align: center; }
+  .smtp-detail { color: var(--text-dim); }
+  .smtp-cmd { font-family: 'Cascadia Code', monospace; font-size: .75rem; color: var(--cyan); }
+  .smtp-resp { font-family: 'Cascadia Code', monospace; font-size: .72rem; color: var(--text-dim); word-break: break-all; margin-top: .2rem; }
+  .smtp-verdict-box { margin-top: 1rem; padding: 1rem; border-radius: 6px; text-align: center; font-weight: 700; font-size: .95rem; }
+  .smtp-verdict-box.delivered { background: rgba(248,113,113,.12); border: 1px solid rgba(248,113,113,.3); color: var(--red); }
+  .smtp-verdict-box.blocked { background: rgba(52,211,153,.12); border: 1px solid rgba(52,211,153,.3); color: var(--green); }
+  .smtp-theory { margin-top: .75rem; padding: .75rem 1rem; border-radius: 6px; background: var(--surface2); font-size: .82rem; border-left: 3px solid var(--blue); }
+  .smtp-theory .label { font-weight: 700; color: var(--blue); font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .3rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>&#x1F6E1; {{ posture.domain }}</h1>
+  <p class="subtitle">Email Security Assessment &mdash; {{ posture.timestamp }}</p>
+
+  <!-- ── Risk Score Card ──────────────────────────── -->
+  <div class="grid">
+    <div class="card risk-meter">
+      <div class="card-title">Phishing Risk Score</div>
+      {% if posture.risk_score > 79 %}
+        <div class="score c-red">{{ posture.risk_score }}%</div>
+        <div class="level c-red">{{ posture.risk_level }}</div>
+        <div class="bar-bg"><div class="bar-fill bg-red" style="width:{{ posture.risk_score }}%"></div></div>
+      {% else %}
+        {% if posture.risk_score > 29 %}
+          <div class="score c-yellow">{{ posture.risk_score }}%</div>
+          <div class="level c-yellow">{{ posture.risk_level }}</div>
+          <div class="bar-bg"><div class="bar-fill bg-yellow" style="width:{{ posture.risk_score }}%"></div></div>
+        {% else %}
+          <div class="score c-green">{{ posture.risk_score }}%</div>
+          <div class="level c-green">{{ posture.risk_level }}</div>
+          <div class="bar-bg"><div class="bar-fill bg-green" style="width:{{ posture.risk_score }}%"></div></div>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <div class="card-title">SPF Status</div>
+      {% match posture.spf %}
+        {% when Some with (spf) %}
+          {% if spf.qualifier == SpfQualifier::Fail %}
+            <span class="badge badge-pass">PASS &mdash; -all</span>
+          {% else %}
+            {% if spf.qualifier == SpfQualifier::SoftFail %}
+              <span class="badge badge-warn">SOFTFAIL &mdash; ~all</span>
+            {% else %}
+              <span class="badge badge-fail">WEAK &mdash; {{ spf.qualifier }}</span>
+            {% endif %}
+          {% endif %}
+          <p style="margin-top:.75rem;font-size:.75rem;color:var(--text-dim)">Mechanisms: {{ spf.mechanisms.len() }}</p>
+        {% when None %}
+          <span class="badge badge-fail">NOT FOUND</span>
+      {% endmatch %}
+    </div>
+
+    <div class="card">
+      <div class="card-title">DMARC Status</div>
+      {% match posture.dmarc %}
+        {% when Some with (dmarc) %}
+          {% if dmarc.policy == DmarcPolicy::Reject %}
+            <span class="badge badge-pass">p=reject</span>
+          {% else %}
+            {% if dmarc.policy == DmarcPolicy::Quarantine %}
+              <span class="badge badge-warn">p=quarantine</span>
+            {% else %}
+              <span class="badge badge-fail">p=none</span>
+            {% endif %}
+          {% endif %}
+          <p style="margin-top:.75rem;font-size:.75rem;color:var(--text-dim)">PCT: {{ dmarc.pct }}% | Align: {{ dmarc.adkim }}/{{ dmarc.aspf }}</p>
+        {% when None %}
+          <span class="badge badge-fail">NOT FOUND</span>
+      {% endmatch %}
+    </div>
+  </div>
+
+  <!-- ── Records Table ────────────────────────────── -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title">Raw DNS Records</div>
+      <table>
+        <tr><th>Type</th><th>Value</th></tr>
+        <tr><td>SPF</td><td class="raw">{{ posture.raw_spf.as_deref().unwrap_or("(none)") }}</td></tr>
+        <tr><td>DMARC</td><td class="raw">{{ posture.raw_dmarc.as_deref().unwrap_or("(none)") }}</td></tr>
+        {% for k in posture.dkim_keys %}
+        <tr><td>DKIM ({{ k.selector }})</td><td class="raw">{{ k.raw }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="card-title">DKIM Keys ({{ posture.dkim_keys.len() }} found)</div>
+      {% if posture.dkim_keys.is_empty() %}
+        <span class="badge badge-fail">NO KEYS DISCOVERED</span>
+      {% else %}
+        <table>
+          <tr><th>Selector</th><th>Type</th><th>~Bits</th><th>Valid</th></tr>
+          {% for k in posture.dkim_keys %}
+          <tr>
+            <td>{{ k.selector }}</td>
+            <td>{{ k.key_type }}</td>
+            <td>{{ k.key_bits_approx }}</td>
+            <td>{% if k.valid_syntax %}<span class="badge badge-pass">OK</span>{% else %}<span class="badge badge-fail">BAD</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Spoof Simulation ────────────────────────── -->
+  {% if !posture.spoof_results.is_empty() %}
+  <div class="card" style="margin-bottom:1.5rem;">
+    <div class="section-title">&#x26A0; Spoof Simulation</div>
+    {% for r in posture.spoof_results %}
+    <div class="spoof-stage">
+      <div class="spoof-label">{{ r.stage }}</div>
+      <div class="spoof-verdict">
+        {% if r.verdict.contains("REJECTED") || r.verdict.contains("DROPPED") || r.verdict.contains("FAIL") %}
+          <span class="badge badge-pass">{{ r.verdict }}</span>
+        {% else %}
+          {% if r.verdict.contains("SPAM") || r.verdict.contains("TAGGED") || r.verdict.contains("QUARANTINE") %}
+            <span class="badge badge-warn">{{ r.verdict }}</span>
+          {% else %}
+            <span class="badge badge-fail">{{ r.verdict }}</span>
+          {% endif %}
+        {% endif %}
+        <p style="font-size:.75rem;color:var(--text-dim);margin-top:.35rem;">{{ r.detail }}</p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- ── SMTP Handshake (Active) ──────────────────── -->
+  {% match posture.smtp_handshake %}
+    {% when Some with (hs) %}
+    <div class="card" style="margin-bottom:1.5rem;">
+      <div class="section-title">&#x1F50C; SMTP Handshake — {{ hs.target_host }}:{{ hs.target_port }}</div>
+      <p style="font-size:.8rem;color:var(--text-dim);margin-bottom:1rem;">Spoofed domain: <strong>{{ hs.spoofed_domain }}</strong></p>
+
+      {% for step in hs.steps %}
+      <div class="smtp-step">
+        <div class="smtp-phase">{{ step.phase }}</div>
+        <div class="smtp-code {% if step.success %}c-green{% else %}{% if step.response_code >= 500 %}c-red{% else %}c-yellow{% endif %}{% endif %}">{{ step.response_code }}</div>
+        <div class="smtp-detail">
+          {% match step.command_sent %}
+            {% when Some with (cmd) %}
+              <div class="smtp-cmd">C: {{ cmd }}</div>
+            {% when None %}
+          {% endmatch %}
+          <div class="smtp-resp">S: {{ step.response_text }}</div>
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if hs.delivered %}
+        <div class="smtp-verdict-box delivered">&#x26A0; MESSAGE ACCEPTED BY SERVER</div>
+      {% else %}
+        <div class="smtp-verdict-box blocked">&#x2705; CONNECTION DROPPED
+          {% match hs.dropped_at %}
+            {% when Some with (phase) %}
+              at phase {{ phase }}
+            {% when None %}
+          {% endmatch %}
+        </div>
+      {% endif %}
+
+      {% match hs.theory_match %}
+        {% when Some with (theory) %}
+          <div class="smtp-theory">
+            <div class="label">Theory vs Reality</div>
+            {{ theory }}
+          </div>
+        {% when None %}
+      {% endmatch %}
+    </div>
+    {% when None %}
+  {% endmatch %}
+
+  <!-- ── Remediations ─────────────────────────────── -->
+  {% if !posture.remediations.is_empty() %}
+  <div class="card">
+    <div class="section-title">Remediation Steps</div>
+    {% for rem in posture.remediations %}
+    <div class="rem-item {% if rem.severity == RiskLevel::Medium %}sev-medium{% endif %} {% if rem.severity == RiskLevel::Low %}sev-low{% endif %}">
+      <span class="badge {% if rem.severity == RiskLevel::Critical %}badge-fail{% else %}{% if rem.severity == RiskLevel::High %}badge-fail{% else %}{% if rem.severity == RiskLevel::Medium %}badge-warn{% else %}badge-pass{% endif %}{% endif %}{% endif %}">{{ rem.severity }}</span>
+      <p class="rem-desc" style="margin-top:.5rem;">{{ rem.description }}</p>
+      <div class="rem-fix">{{ rem.dns_fix }}</div>
+      <div class="rem-fix" style="color:var(--green);">PS&gt; {{ rem.ps_command }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+</body>
+</html>
