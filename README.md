@@ -190,4 +190,4 @@ Running the active spoof test against third-party infrastructure without authori
 
 ## License
 
-MIT (or your license of choice)
+MIT LICENSE
