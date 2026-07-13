@@ -39,9 +39,6 @@ pub fn print_console(posture: &DomainPosture, verbose: bool) {
     use console::style;
 
     let bar = "═".repeat(60);
-    println!("\n{}", style(&bar).cyan());
-    println!("{}", style(format!("  EMAIL SECURITY POSTURE: {}", posture.domain.to_uppercase())).bold().cyan());
-    println!("{}", style(&bar).cyan());
 
     // ── Risk Score ──
     let score_color = match posture.risk_score {
@@ -50,8 +47,6 @@ pub fn print_console(posture: &DomainPosture, verbose: bool) {
         60..=79 => style(format!("{}%", posture.risk_score)).red().bold(),
         _ => style(format!("{}%", posture.risk_score)).red().bold(),
     };
-    println!("\n  {} {}", style("Risk Score:").bold(), score_color);
-    println!("  {} {}", style("Risk Level:").bold(), style(&posture.risk_level).bold());
 
     // ── SPF ──
     println!("\n{}", style("── SPF ──────────────────────────────────").dim());

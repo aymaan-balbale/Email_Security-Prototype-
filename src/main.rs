@@ -4,6 +4,7 @@ mod models;
 mod parser;
 mod report;
 mod spoof;
+mod email_parser;
 
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -19,7 +20,19 @@ use std::time::Duration;
 struct Args {
     /// Target domain to evaluate (e.g. example.com)
     #[arg(short, long)]
-    domain: String,
+    domain: Option<String>,
+
+    /// Parse a raw email (.eml) file for header analysis
+    #[arg(short, long)]
+    file: Option<String>,
+
+    /// Parse a raw email header string for header analysis
+    #[arg(long)]
+    header: Option<String>,
+
+    /// Output findings as formatted JSON instead of human-readable text
+    #[arg(short, long)]
+    json: bool,
 
     /// Export findings to JSON
     #[arg(long)]
@@ -47,17 +60,85 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
     let args = Args::parse();
-    let domain = args.domain.trim().to_lowercase();
 
-    let pb = ProgressBar::new_spinner();
-    pb.set_style(
-        ProgressStyle::default_spinner()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-            .template("{spinner:.cyan} {msg}")?,
-    );
-    pb.enable_steady_tick(Duration::from_millis(80));
+    if let Some(file_path) = &args.file {
+        match std::fs::read_to_string(file_path) {
+            Ok(content) => email_parser::parse_and_print_headers(&content),
+            Err(e) => eprintln!("Error reading file {}: {}", file_path, e),
+        }
+        return;
+    }
+
+    if let Some(header_str) = &args.header {
+        email_parser::parse_and_print_headers(header_str);
+        return;
+    }
+
+    let domain = match &args.domain {
+        Some(d) => d.trim().to_lowercase(),
+        None => {
+            eprintln!("Error: --domain is required unless --file or --header is provided.");
+            std::process::exit(1);
+        }
+    };
+
+    match run_scan(&domain, &args).await {
+        Ok(posture) => {
+            if args.json {
+                match serde_json::to_string_pretty(&posture) {
+                    Ok(json_out) => println!("{}", json_out),
+                    Err(e) => eprintln!("Error serializing JSON: {}", e),
+                }
+            } else {
+                println!("EMAIL SECURITY POSTURE: {}", domain.to_uppercase());
+                println!("Risk Score: {}% ({})", posture.risk_score, posture.risk_level);
+                
+                report::print_console(&posture, args.verbose);
+            }
+
+            if let Some(path) = &args.export_json {
+                if let Err(e) = report::export_json(&posture, path) {
+                    eprintln!("Error exporting JSON: {}", e);
+                } else {
+                    if !args.json {
+                        println!("\n  JSON exported → {}", path);
+                    }
+                }
+            }
+
+            if let Some(path) = &args.export_html {
+                if let Err(e) = report::export_html(&posture, path) {
+                    eprintln!("Error exporting HTML: {}", e);
+                } else {
+                    if !args.json {
+                        println!("  HTML exported → {}", path);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+async fn run_scan(domain: &str, args: &Args) -> Result<DomainPosture, Box<dyn std::error::Error>> {
+    let pb = if args.json {
+        ProgressBar::hidden()
+    } else {
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+                .template("{spinner:.cyan} {msg}")?,
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb
+    };
+    
     pb.set_message(format!("Targeting {}...", domain));
 
     let scanner = dns::DnsScanner::new()?;
@@ -65,19 +146,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── SPF ──
     pb.set_message("Resolving SPF records...");
-    let (raw_spf, spf_meta) = scanner.get_spf(&domain).await;
+    let (raw_spf, spf_meta) = scanner.get_spf(domain).await;
     query_log.push(spf_meta);
     let spf = raw_spf.as_ref().map(|r| parser::parse_spf(r));
 
     // ── DMARC ──
     pb.set_message("Resolving DMARC records...");
-    let (raw_dmarc, dmarc_meta) = scanner.get_dmarc(&domain).await;
+    let (raw_dmarc, dmarc_meta) = scanner.get_dmarc(domain).await;
     query_log.push(dmarc_meta);
     let dmarc = raw_dmarc.as_ref().map(|r| parser::parse_dmarc(r));
 
     // ── DKIM (concurrent brute-force) ──
     pb.set_message("Brute-forcing DKIM selectors (15 concurrent queries)...");
-    let (dkim_keys, dkim_metas) = scanner.discover_dkim(&domain).await;
+    let (dkim_keys, dkim_metas) = scanner.discover_dkim(domain).await;
     query_log.extend(dkim_metas);
 
     pb.finish_and_clear();
@@ -86,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC").to_string();
 
     let mut posture = DomainPosture {
-        domain: domain.clone(),
+        domain: domain.to_string(),
         timestamp,
         raw_spf,
         raw_dmarc,
@@ -114,13 +195,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Active SMTP handshake ──
     if args.spoof_test {
-        let pb2 = ProgressBar::new_spinner();
-        pb2.set_style(
-            ProgressStyle::default_spinner()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-                .template("{spinner:.red} {msg}")?,
-        );
-        pb2.enable_steady_tick(Duration::from_millis(80));
+        let pb2 = if args.json {
+            ProgressBar::hidden()
+        } else {
+            let pb2 = ProgressBar::new_spinner();
+            pb2.set_style(
+                ProgressStyle::default_spinner()
+                    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+                    .template("{spinner:.red} {msg}")?,
+            );
+            pb2.enable_steady_tick(Duration::from_millis(80));
+            pb2
+        };
+
         pb2.set_message(format!(
             "Executing SMTP handshake against {}:{}...",
             args.smtp_target, args.smtp_port
@@ -129,7 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut handshake = spoof::smtp_handshake(
             &args.smtp_target,
             args.smtp_port,
-            &domain,
+            domain,
         )
         .await;
 
@@ -140,18 +227,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         posture.smtp_handshake = Some(handshake);
     }
 
-    // ── Output ──
-    report::print_console(&posture, args.verbose);
-
-    if let Some(path) = args.export_json {
-        report::export_json(&posture, &path)?;
-        println!("\n  JSON exported → {}", path);
-    }
-
-    if let Some(path) = args.export_html {
-        report::export_html(&posture, &path)?;
-        println!("  HTML exported → {}", path);
-    }
-
-    Ok(())
+    Ok(posture)
 }
